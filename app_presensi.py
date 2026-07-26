@@ -13,7 +13,7 @@ from streamlit_geolocation import streamlit_geolocation
 # Ganti dengan koordinat asli kantor Anda (Contoh di bawah adalah Monas, Jakarta)
 OFFICE_LAT = -9.66927743077488 
 OFFICE_LNG = 120.30029710982076
-MAX_RADIUS_METERS = 10.0  # Batas radius 50 meter
+MAX_RADIUS_METERS = 50.0  # Batas radius 50 meter
 
 # ==========================================
 # INISIALISASI DATABASE SQLITE
