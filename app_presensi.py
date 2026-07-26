@@ -9,9 +9,9 @@ from streamlit_geolocation import streamlit_geolocation
 # ==========================================
 # KONFIGURASI LOKASI KANTOR 
 # ==========================================
-OFFICE_LAT = -6.1753924
-OFFICE_LNG = 106.8271528
-MAX_RADIUS_METERS = 50.0  # Batas radius 50 meter
+OFFICE_LAT = -9.66927743077488 
+OFFICE_LNG = 120.30029710982076
+MAX_RADIUS_METERS = 100.0  # Batas radius 50 meter
 
 # Folder Penyimpanan Foto Selfie
 FOLDER_FOTO = "foto_absensi"
