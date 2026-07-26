@@ -7,31 +7,56 @@ import io
 from datetime import datetime
 from streamlit_geolocation import streamlit_geolocation
 
+# Library Google Drive API
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseUpload
+
 # ==========================================
 # KONFIGURASI LOKASI KANTOR 
 # ==========================================
 OFFICE_LAT = -9.66927743077488 
 OFFICE_LNG = 120.30029710982076
-MAX_RADIUS_METERS = 100.0  # Batas radius 100 meter
-
-# Folder Penyimpanan Foto Selfie
-FOLDER_FOTO = "foto_absensi"
-os.makedirs(FOLDER_FOTO, exist_ok=True)
+MAX_RADIUS_METERS = 100.0  # Radius 100 meter
 
 # ==========================================
-# DATABASE SQLITE (FITUR MIGRASI OTOMATIS)
+# FUNGSI UPLOAD KE GOOGLE DRIVE
+# ==========================================
+def upload_to_gdrive(file_buffer, file_name):
+    """Mengunggah foto langsung dari memori ke Google Drive"""
+    try:
+        SCOPES = ['https://www.googleapis.com/auth/drive.file']
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        folder_id = st.secrets["FOLDER_ID"]
+
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+        service = build('drive', 'v3', credentials=creds)
+
+        file_metadata = {
+            'name': file_name,
+            'parents': [folder_id]
+        }
+
+        media = MediaIoBaseUpload(io.BytesIO(file_buffer), mimetype='image/jpeg', resumable=True)
+        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+
+        return file.get('webViewLink')  # Mengembalikan link foto di Google Drive
+    except Exception as e:
+        st.error(f"Gagal mengunggah foto ke Google Drive: {e}")
+        return None
+
+# ==========================================
+# DATABASE SQLITE & AUTO-MIGRATION
 # ==========================================
 def init_db():
     with sqlite3.connect('absensi.db') as conn:
         c = conn.cursor()
         
-        # 1. Tabel Pegawai
         c.execute('''CREATE TABLE IF NOT EXISTS pegawai (
                         nip TEXT PRIMARY KEY,
                         nama TEXT
                     )''')
                     
-        # 2. Tabel Presensi 
         c.execute('''CREATE TABLE IF NOT EXISTS presensi (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         nip TEXT,
@@ -43,16 +68,15 @@ def init_db():
                         foto_path TEXT
                     )''')
         
-        # 3. MIGRASI OTOMATIS: Tambahkan kolom baru jika file absensi.db masih versi lama
+        # Migrasi kolom foto_path jika belum ada
         c.execute("PRAGMA table_info(presensi)")
         existing_columns = [column[1] for column in c.fetchall()]
-        
         if 'status_waktu' not in existing_columns:
             c.execute("ALTER TABLE presensi ADD COLUMN status_waktu TEXT")
         if 'foto_path' not in existing_columns:
             c.execute("ALTER TABLE presensi ADD COLUMN foto_path TEXT")
-            
-        # 4. Insert Data Pegawai Bawaan Jika Kosong
+
+        # Insert pegawai bawaan jika kosong
         c.execute("SELECT COUNT(*) FROM pegawai")
         if c.fetchone()[0] == 0:
             dummy_data = [('1001', 'Ahmad Budi'), 
@@ -61,13 +85,12 @@ def init_db():
             c.executemany("INSERT INTO pegawai VALUES (?, ?)", dummy_data)
         conn.commit()
 
-# Jalankan inisialisasi & migrasi database
 init_db()
+
 # ==========================================
 # FUNGSI HAVERSINE & LOGIKA WAKTU
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
-    """Menghitung jarak dalam meter menggunakan Haversine Formula"""
     R = 6371000  
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
@@ -76,7 +99,6 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
 def hitung_status_waktu(shift, jenis_absen, dt_now):
-    """Menghitung keterlambatan otomatis"""
     jam_menit = dt_now.time()
     
     if jenis_absen == "Masuk":
@@ -179,29 +201,32 @@ if st.button("💾 Simpan Presensi", type="primary", use_container_width=True):
     elif foto_selfie is None:
         st.error("Gagal: Wajib mengambil foto selfie menggunakan kamera.")
     else:
-        waktu_sekarang = datetime.now()
-        str_waktu = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
-        
-        status_waktu = hitung_status_waktu(shift, jenis_absen, waktu_sekarang)
-        
-        # Simpan file foto ke folder foto_absensi
-        nama_file_foto = f"{FOLDER_FOTO}/{nip_input}_{jenis_absen}_{waktu_sekarang.strftime('%Y%m%d_%H%M%S')}.jpg"
-        with open(nama_file_foto, "wb") as f:
-            f.write(foto_selfie.getbuffer())
-        
-        # Simpan data presensi ke Database
-        with sqlite3.connect('absensi.db') as conn:
-            c = conn.cursor()
-            c.execute('''INSERT INTO presensi 
-                         (nip, nama, shift, jenis_absen, waktu, status_waktu, foto_path) 
-                         VALUES (?, ?, ?, ?, ?, ?, ?)''', 
-                      (nip_input, nama_pegawai, shift, jenis_absen, str_waktu, status_waktu, nama_file_foto))
-            conn.commit()
+        with st.spinner("Mengunggah foto ke Google Drive & Menyimpan Data..."):
+            waktu_sekarang = datetime.now()
+            str_waktu = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
+            status_waktu = hitung_status_waktu(shift, jenis_absen, waktu_sekarang)
             
-        if status_waktu == "Terlambat":
-            st.warning(f"⚠️ Presensi {jenis_absen} Tercatat pada {str_waktu}. Status: **TERLAMBAT**.")
-        else:
-            st.success(f"🎉 Presensi {jenis_absen} Berhasil! Tercatat pada {str_waktu}. Status: **{status_waktu.upper()}**.")
+            # 1. Unggah foto langsung ke Google Drive
+            nama_file_foto = f"{nip_input}_{jenis_absen}_{waktu_sekarang.strftime('%Y%m%d_%H%M%S')}.jpg"
+            bytes_foto = foto_selfie.getvalue()
+            link_gdrive = upload_to_gdrive(bytes_foto, nama_file_foto)
+            
+            if link_gdrive:
+                # 2. Simpan Link Google Drive ke Database
+                with sqlite3.connect('absensi.db') as conn:
+                    c = conn.cursor()
+                    c.execute('''INSERT INTO presensi 
+                                 (nip, nama, shift, jenis_absen, waktu, status_waktu, foto_path) 
+                                 VALUES (?, ?, ?, ?, ?, ?, ?)''', 
+                              (nip_input, nama_pegawai, shift, jenis_absen, str_waktu, status_waktu, link_gdrive))
+                    conn.commit()
+                    
+                if status_waktu == "Terlambat":
+                    st.warning(f"⚠️ Presensi {jenis_absen} Tercatat pada {str_waktu}. Status: **TERLAMBAT**.")
+                else:
+                    st.success(f"🎉 Presensi {jenis_absen} Berhasil! Tercatat pada {str_waktu}. Status: **{status_waktu.upper()}**.")
+            else:
+                st.error("Presensi gagal disimpan karena foto gagal terunggah ke Google Drive.")
 
 # ==========================================
 # DASHBOARD REKAP ABSENSI EXCEL (KHUSUS ADMIN)
@@ -209,10 +234,9 @@ if st.button("💾 Simpan Presensi", type="primary", use_container_width=True):
 st.markdown("---")
 with st.expander("📊 Rekap Absensi & Laporan Excel (Khusus Admin)"):
     with sqlite3.connect('absensi.db') as conn:
-        df = pd.read_sql_query("SELECT nip AS NIP, nama AS [Nama Pegawai], shift AS Shift, jenis_absen AS [Jenis Presensi], waktu AS [Waktu Presensi], status_waktu AS [Status Waktu], foto_path AS [File Foto] FROM presensi ORDER BY id DESC", conn)
+        df = pd.read_sql_query("SELECT nip AS NIP, nama AS [Nama Pegawai], shift AS Shift, jenis_absen AS [Jenis Presensi], waktu AS [Waktu Presensi], status_waktu AS [Status Waktu], foto_path AS [Link Foto GDrive] FROM presensi ORDER BY id DESC", conn)
         
         if not df.empty:
-            # Filter berdasarkan NIP
             list_nip = ["Semua NIP"] + list(df['NIP'].unique())
             pilihan_nip = st.selectbox("Filter Tampilan Berdasarkan NIP:", list_nip)
             
@@ -223,7 +247,6 @@ with st.expander("📊 Rekap Absensi & Laporan Excel (Khusus Admin)"):
                 
             st.dataframe(df_filtered, use_container_width=True)
             
-            # --- GENERATE EXCEL FILE (.xlsx) ---
             output_excel = io.BytesIO()
             with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
                 df_filtered.to_excel(writer, index=False, sheet_name='Rekap Presensi')
