@@ -11,9 +11,9 @@ from streamlit_geolocation import streamlit_geolocation
 # ==========================================
 OFFICE_LAT = -6.1753924
 OFFICE_LNG = 106.8271528
-MAX_RADIUS_METERS = 50.0  # Radius maksimal dalam meter
+MAX_RADIUS_METERS = 50.0  # Batas radius 50 meter
 
-# Buat folder penyimpanan foto jika belum ada
+# Folder Penyimpanan Foto Selfie
 FOLDER_FOTO = "foto_absensi"
 os.makedirs(FOLDER_FOTO, exist_ok=True)
 
@@ -28,7 +28,7 @@ def init_db():
                         nip TEXT PRIMARY KEY,
                         nama TEXT
                     )''')
-        # Tabel Presensi (Hanya menyimpan data yang diperlukan)
+        # Tabel Presensi (Hanya menyimpan data wajib, tanpa jarak/koordinat)
         c.execute('''CREATE TABLE IF NOT EXISTS presensi (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         nip TEXT,
@@ -40,7 +40,7 @@ def init_db():
                         foto_path TEXT
                     )''')
         
-        # Insert Data Pegawai Bawaan
+        # Insert Data Pegawai Bawaan Jika Kosong
         c.execute("SELECT COUNT(*) FROM pegawai")
         if c.fetchone()[0] == 0:
             dummy_data = [('1001', 'Ahmad Budi'), 
@@ -52,10 +52,11 @@ def init_db():
 init_db()
 
 # ==========================================
-# FUNGSI VALiDASI LOGIKA & JARAK
+# FUNGSI HAVERSINE & LOGIKA WAKTU
 # ==========================================
 def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371000
+    """Menghitung jarak dalam meter menggunakan Haversine Formula"""
+    R = 6371000  
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     delta_phi = math.radians(lat2 - lat1)
     delta_lambda = math.radians(lon2 - lon1)
@@ -63,25 +64,18 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
 
 def hitung_status_waktu(shift, jenis_absen, dt_now):
-    """
-    Hitung status Tepat Waktu / Terlambat
-    - Pagi  : Shift 06.00 - 18.00 (Toleransi Masuk s/d 06.15)
-    - Malam : Shift 18.00 - 06.00 (Toleransi Masuk s/d 18.15)
-    """
+    """Menghitung keterlambatan otomatis"""
     jam_menit = dt_now.time()
     
     if jenis_absen == "Masuk":
         if shift == "Pagi":
-            # Batas toleransi tepat waktu untuk Pagi (06.15)
             batas_pagi = datetime.strptime("06:15:00", "%H:%M:%S").time()
             if jam_menit > batas_pagi and jam_menit < datetime.strptime("18:00:00", "%H:%M:%S").time():
                 return "Terlambat"
             return "Tepat Waktu"
             
         elif shift == "Malam":
-            # Batas toleransi tepat waktu untuk Malam (18.15)
             batas_malam = datetime.strptime("18:15:00", "%H:%M:%S").time()
-            # Terlambat jika lewat 18.15 malam atau sebelum jam 06.00 pagi
             if jam_menit > batas_malam or jam_menit < datetime.strptime("06:00:00", "%H:%M:%S").time():
                 return "Terlambat"
             return "Tepat Waktu"
@@ -118,9 +112,9 @@ if nip_input:
             nama_pegawai = res[0]
             st.success(f"👤 Nama Pegawai: **{nama_pegawai}**")
         else:
-            st.error("❌ NIP tidak terdaftar.")
+            st.error("❌ NIP tidak terdaftar di database.")
 
-# 2. Detail Jam Shift & Waktu
+# 2. Detail Shift & Jenis Absen
 col1, col2 = st.columns(2)
 with col1:
     jenis_absen = st.selectbox("Jenis Presensi:", ["Masuk", "Pulang"])
@@ -130,11 +124,13 @@ with col2:
 st.caption("ℹ️ *Shift Pagi (06.00 - 18.00) | Shift Malam (18.00 - 06.00)*")
 st.markdown("---")
 
-# 3. Validasi Lokasi (Diukur tapi tidak disimpan ke DB)
-st.subheader("2. Verifikasi Lokasi Kantor")
+# 3. Verifikasi Lokasi Geofencing (Tampilkan Jarak & Koordinat di UI)
+st.subheader("2. Verifikasi Lokasi Geofencing")
+st.info("Klik tombol di bawah ini untuk mengambil titik koordinat GPS Anda.")
 lokasi = streamlit_geolocation()
 
 user_lat, user_lng = None, None
+jarak = None
 posisi_valid = False
 
 if lokasi and lokasi.get('latitude') and lokasi.get('longitude'):
@@ -142,49 +138,48 @@ if lokasi and lokasi.get('latitude') and lokasi.get('longitude'):
     user_lng = lokasi['longitude']
     jarak = calculate_distance(OFFICE_LAT, OFFICE_LNG, user_lat, user_lng)
     
+    # Tampilkan info lokasi ke layar pengguna
+    st.write(f"🗺️ **Koordinat Anda:** `{user_lat}, {user_lng}`")
+    st.write(f"📏 **Jarak ke Kantor:** `{jarak:.2f} meter`")
+    
     if jarak <= MAX_RADIUS_METERS:
-        st.success(f"✅ Anda berada di area kantor (Jarak: {jarak:.1f} meter)")
+        st.success("✅ Lokasi Valid. Anda berada di dalam area kantor.")
         posisi_valid = True
     else:
-        st.error(f"❌ Di luar area kantor (Jarak: {jarak:.1f} meter, Maks: {MAX_RADIUS_METERS}m)")
+        st.error(f"❌ Lokasi Ditolak. Anda berada di luar radius izin (Maks {MAX_RADIUS_METERS}m).")
 
 st.markdown("---")
 
-# 4. Ambil Foto Bukti
-st.subheader("3. Foto Bukti Kehadiran")
-metode_foto = st.radio("Pilih Kamera:", ["Kamera HP / File Upload", "Kamera Langsung Web"], horizontal=True)
-
-foto_selfie = None
-if metode_foto == "Kamera HP / File Upload":
-    foto_selfie = st.file_uploader("Ambil Foto dari Kamera HP", type=["jpg", "jpeg", "png"])
-else:
-    foto_selfie = st.camera_input("Ambil Foto Kamera")
+# 4. Bukti Foto Kamera (Murni Menggunakan Kamera)
+st.subheader("3. Bukti Kehadiran (Foto Kamera)")
+st.warning("Untuk mencegah manipulasi lokasi, wajib ambil foto selfie secara langsung.")
+foto_selfie = st.camera_input("Ambil Foto Kamera")
 
 st.markdown("---")
 
-# 5. Tombol Simpan
+# 5. Tombol Simpan Presensi
 if st.button("💾 Simpan Presensi", type="primary", use_container_width=True):
     if not nip_input or not nama_pegawai:
-        st.error("Masukkan NIP pegawai yang valid.")
+        st.error("Gagal: Masukkan NIP pegawai yang terdaftar.")
+    elif user_lat is None or user_lng is None:
+        st.error("Gagal: Mohon ambil titik lokasi GPS terlebih dahulu.")
     elif not posisi_valid:
-        st.error("Gagal: Anda harus berada di area kantor untuk melakukan presensi.")
+        st.error(f"Gagal: Lokasi ditolak. Jarak Anda ({jarak:.1f} m) melebihi batas {MAX_RADIUS_METERS} m.")
     elif foto_selfie is None:
-        st.error("Gagal: Wajib mengambil/mengunggah foto bukti kehadiran.")
+        st.error("Gagal: Wajib mengambil foto selfie menggunakan kamera.")
     else:
         waktu_sekarang = datetime.now()
         str_waktu = waktu_sekarang.strftime("%Y-%m-%d %H:%M:%S")
         
-        # Hitung Otomatis Terlambat / Tepat Waktu
+        # Hitung Status Waktu (Tepat Waktu / Terlambat)
         status_waktu = hitung_status_waktu(shift, jenis_absen, waktu_sekarang)
         
-        # Simpan file foto ke folder foto_absensi
-        ext = foto_selfie.name.split('.')[-1] if hasattr(foto_selfie, 'name') else 'jpg'
-        nama_file_foto = f"{FOLDER_FOTO}/{nip_input}_{jenis_absen}_{waktu_sekarang.strftime('%Y%m%d_%H%M%S')}.{ext}"
-        
+        # Simpan File Foto Selfie ke Folder foto_absensi/
+        nama_file_foto = f"{FOLDER_FOTO}/{nip_input}_{jenis_absen}_{waktu_sekarang.strftime('%Y%m%d_%H%M%S')}.jpg"
         with open(nama_file_foto, "wb") as f:
             f.write(foto_selfie.getbuffer())
         
-        # Simpan data presensi ke Database
+        # Simpan ke Database (TANPA simpan Jarak / Koordinat)
         with sqlite3.connect('absensi.db') as conn:
             c = conn.cursor()
             c.execute('''INSERT INTO presensi 
@@ -194,12 +189,12 @@ if st.button("💾 Simpan Presensi", type="primary", use_container_width=True):
             conn.commit()
             
         if status_waktu == "Terlambat":
-            st.warning(f"⚠️ Presensi Berhasil Disimpan pada {str_waktu}. Status: **TERLAMBAT**.")
+            st.warning(f"⚠️ Presensi {jenis_absen} Tercatat pada {str_waktu}. Status: **TERLAMBAT**.")
         else:
-            st.success(f"🎉 Presensi Berhasil Disimpan pada {str_waktu}. Status: **{status_waktu.upper()}**.")
+            st.success(f"🎉 Presensi {jenis_absen} Berhasil! Tercatat pada {str_waktu}. Status: **{status_waktu.upper()}**.")
 
 # ==========================================
-# ADMIN REKAP ABSENSI (TERPISAH TIAP NIP)
+# DASHBOARD REKAP ABSENSI PER NIP (ADMIN)
 # ==========================================
 st.markdown("---")
 with st.expander("📊 Rekap Absensi & Laporan (Khusus Admin)"):
@@ -207,7 +202,7 @@ with st.expander("📊 Rekap Absensi & Laporan (Khusus Admin)"):
         df = pd.read_sql_query("SELECT nip, nama, shift, jenis_absen, waktu, status_waktu, foto_path FROM presensi ORDER BY id DESC", conn)
         
         if not df.empty:
-            # Fitur Memisah Data Per NIP
+            # Filter berdasarkan NIP
             list_nip = ["Semua NIP"] + list(df['nip'].unique())
             pilihan_nip = st.selectbox("Filter Tampilan Berdasarkan NIP:", list_nip)
             
@@ -218,7 +213,7 @@ with st.expander("📊 Rekap Absensi & Laporan (Khusus Admin)"):
                 
             st.dataframe(df_filtered, use_container_width=True)
             
-            # Download Rekap CSV
+            # Unduh Rekap CSV
             csv = df_filtered.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label=f"📥 Download Rekap CSV ({pilihan_nip})",
