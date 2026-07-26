@@ -19,19 +19,19 @@ FOLDER_FOTO = "foto_absensi"
 os.makedirs(FOLDER_FOTO, exist_ok=True)
 
 # ==========================================
-# DATABASE SQLITE (AMAN & AMANAH DATA)
+# DATABASE SQLITE (FITUR MIGRASI OTOMATIS)
 # ==========================================
 def init_db():
     with sqlite3.connect('absensi.db') as conn:
         c = conn.cursor()
         
-        # Tabel Pegawai
+        # 1. Tabel Pegawai
         c.execute('''CREATE TABLE IF NOT EXISTS pegawai (
                         nip TEXT PRIMARY KEY,
                         nama TEXT
                     )''')
                     
-        # Tabel Presensi (Tabel dibuat sekali & TIDAK AKAN DIHAPUS LAGI)
+        # 2. Tabel Presensi 
         c.execute('''CREATE TABLE IF NOT EXISTS presensi (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         nip TEXT,
@@ -43,7 +43,16 @@ def init_db():
                         foto_path TEXT
                     )''')
         
-        # Insert Data Pegawai Bawaan Jika Kosong
+        # 3. MIGRASI OTOMATIS: Tambahkan kolom baru jika file absensi.db masih versi lama
+        c.execute("PRAGMA table_info(presensi)")
+        existing_columns = [column[1] for column in c.fetchall()]
+        
+        if 'status_waktu' not in existing_columns:
+            c.execute("ALTER TABLE presensi ADD COLUMN status_waktu TEXT")
+        if 'foto_path' not in existing_columns:
+            c.execute("ALTER TABLE presensi ADD COLUMN foto_path TEXT")
+            
+        # 4. Insert Data Pegawai Bawaan Jika Kosong
         c.execute("SELECT COUNT(*) FROM pegawai")
         if c.fetchone()[0] == 0:
             dummy_data = [('1001', 'Ahmad Budi'), 
@@ -52,9 +61,8 @@ def init_db():
             c.executemany("INSERT INTO pegawai VALUES (?, ?)", dummy_data)
         conn.commit()
 
-# Jalankan inisialisasi tabel sekali
+# Jalankan inisialisasi & migrasi database
 init_db()
-
 # ==========================================
 # FUNGSI HAVERSINE & LOGIKA WAKTU
 # ==========================================
