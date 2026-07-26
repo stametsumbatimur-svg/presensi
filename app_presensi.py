@@ -20,13 +20,20 @@ OFFICE_LNG = 120.30029710982076
 MAX_RADIUS_METERS = 100.0  # Radius 100 meter
 
 # ==========================================
-# FUNGSI UPLOAD KE GOOGLE DRIVE
+# FUNGSI UPLOAD KE GOOGLE DRIVE (FIX PEM KEY)
 # ==========================================
 def upload_to_gdrive(file_buffer, file_name):
     """Mengunggah foto langsung dari memori ke Google Drive"""
     try:
         SCOPES = ['https://www.googleapis.com/auth/drive.file']
+        
+        # Ambil credentials dari Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # ⚠️ PERBAIKAN UTAMA: Konversi '\\n' menjadi baris baru asli '\n'
+        if "private_key" in creds_dict:
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
         folder_id = st.secrets["FOLDER_ID"]
 
         creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
