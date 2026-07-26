@@ -20,7 +20,7 @@ OFFICE_LNG = 120.30029710982076
 MAX_RADIUS_METERS = 100.0  # Radius 100 meter
 
 # ==========================================
-# FUNGSI UPLOAD KE GOOGLE DRIVE (FIX PEM KEY)
+# FUNGSI UPLOAD KE GOOGLE DRIVE (FIX QUOTA)
 # ==========================================
 def upload_to_gdrive(file_buffer, file_name):
     """Mengunggah foto langsung dari memori ke Google Drive"""
@@ -30,7 +30,7 @@ def upload_to_gdrive(file_buffer, file_name):
         # Ambil credentials dari Secrets
         creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # ⚠️ PERBAIKAN UTAMA: Konversi '\\n' menjadi baris baru asli '\n'
+        # Perbaikan format private_key
         if "private_key" in creds_dict:
             creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
 
@@ -45,9 +45,16 @@ def upload_to_gdrive(file_buffer, file_name):
         }
 
         media = MediaIoBaseUpload(io.BytesIO(file_buffer), mimetype='image/jpeg', resumable=True)
-        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        
+        # ⚠️ TENTUKAN supportsAllDrives=True AGAR TIDAK MEMAKAI KUOTA SERVICE ACCOUNT
+        file = service.files().create(
+            body=file_metadata, 
+            media_body=media, 
+            fields='id, webViewLink',
+            supportsAllDrives=True
+        ).execute()
 
-        return file.get('webViewLink')  # Mengembalikan link foto di Google Drive
+        return file.get('webViewLink')
     except Exception as e:
         st.error(f"Gagal mengunggah foto ke Google Drive: {e}")
         return None
