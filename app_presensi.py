@@ -155,10 +155,32 @@ if st.button("💾 Simpan Presensi", type="primary", use_container_width=True):
             st.error(f"⚠️ Data log tersimpan, namun presensi DITOLAK karena Anda berjarak {jarak_final:.1f} meter (Di luar radius).")
 
 # ==========================================
-# DASHBOARD ADMIN TAMPILAN DATA (Opsional)
+# DASHBOARD ADMIN TAMPILAN DATA & UNDUH REKAP
 # ==========================================
 st.markdown("---")
-with st.expander("📊 Lihat Database Presensi (Khusus Admin)"):
+with st.expander("📊 Lihat Database Presensi & Unduh Rekap (Khusus Admin)"):
     with sqlite3.connect('absensi.db') as conn:
         df = pd.read_sql_query("SELECT id, nip, nama, waktu, jenis_absen, shift, jarak, status FROM presensi ORDER BY id DESC", conn)
+        
+        # 1. Tampilkan tabel di web
         st.dataframe(df, use_container_width=True)
+        
+        # 2. Tombol Download Data (CSV)
+        if not df.empty:
+            st.markdown("### 📥 Unduh Laporan")
+            # Konversi dataframe ke CSV
+            csv = df.to_csv(index=False).encode('utf-8')
+            
+            # Buat nama file dinamis berdasarkan tanggal hari ini
+            nama_file = f"rekap_absensi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            
+            st.download_button(
+                label="Unduh Rekap Absensi (Format CSV)",
+                data=csv,
+                file_name=nama_file,
+                mime="text/csv",
+                type="primary",
+                use_container_width=True
+            )
+        else:
+            st.info("Belum ada data presensi untuk diunduh.")
