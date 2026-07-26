@@ -23,12 +23,17 @@ os.makedirs(FOLDER_FOTO, exist_ok=True)
 def init_db():
     with sqlite3.connect('absensi.db') as conn:
         c = conn.cursor()
+        
+        # ⚠️ TAMBAHKAN BARIS INI: Reset tabel presensi lama agar menyesuaikan kolom baru
+        c.execute("DROP TABLE IF EXISTS presensi")
+        
         # Tabel Pegawai
         c.execute('''CREATE TABLE IF NOT EXISTS pegawai (
                         nip TEXT PRIMARY KEY,
                         nama TEXT
                     )''')
-        # Tabel Presensi (Hanya menyimpan data wajib, tanpa jarak/koordinat)
+                    
+        # Tabel Presensi Baru (Dengan kolom status_waktu & foto_path)
         c.execute('''CREATE TABLE IF NOT EXISTS presensi (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         nip TEXT,
@@ -48,7 +53,6 @@ def init_db():
                           ('1003', 'John Doe')]
             c.executemany("INSERT INTO pegawai VALUES (?, ?)", dummy_data)
         conn.commit()
-
 init_db()
 
 # ==========================================
